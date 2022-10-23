@@ -18,7 +18,7 @@ and finding relevant data to COVID-19 lethality.
 The code block below sets the working directory and uploads datasets with potential
 explanatory variables in our model.
 
-All datasets are included in coviddata.zip zip file. 
+All datasets are included in flcovid foler. 
 
 ```{r}
 #set working directory
