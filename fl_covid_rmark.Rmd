@@ -1,0 +1,463 @@
+---
+title: "Florida COVID-19 Lethality Project"
+author: "George White"
+date: "10/11/2022"
+output: pdf_document
+---
+
+
+## Business Problem and Proposed Outcome
+
+The business problem we address is providing a model that predicts COVID-19 
+lethality rates for Florida counties. We were provided a dataset from the COVID-19
+Johns Hopkins GitHub site related to county COVID statistics. We are assessing the
+project outcome based on the accuracy and reliability of our statistical model.
+Given our business problem, our next step in the analytics process was researching
+and finding relevant data to COVID-19 lethality. 
+
+The code block below sets the working directory and uploads datasets with potential
+explanatory variables in our model.
+
+All datasets are included in coviddata.zip zip file. 
+
+```{r}
+#set working directory
+setwd("/Users/georgewhite/QMB6938-Analytics")
+#__________________________________________________________________________________________________________________________________________________________________________________________________________
+#load libraries
+
+library(rvest)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyverse)
+library(psych)
+library(lmtest)
+library(nortest)
+library(corrr)
+library(readxl)
+library(corrplot)
+library(car)
+
+print(getwd())
+```
+
+
+```{r include=FALSE}
+print(getwd())
+
+#__________________________________________________________________________________________________________________________________________________________________________________________________________
+#load florida county data from Canvas
+fl_covid <- read.csv("flinfo2022.csv")
+str(fl_covid)
+#drop unnecessary and missing columns (Province_State, Country_Region, Last_Update, Recovered, Active)
+mycovid <- fl_covid[-c(4:6,11,12)]
+#_________________________________________________________________________________________________________
+#loading county data from https://www.floridatracking.com/healthtracking/mapview.htm?i=9358&g=3&t=2013&ta=4&it=3
+
+births<-read.csv("births.csv")
+population<-read.csv("population.csv")
+injuries<-read.csv("injuries.csv")
+housing<-read.csv("housing.csv")
+heart<-read.csv("heart.csv")
+cancer<-read.csv("cancer.csv")
+
+#_________________________________________________________________________________________________________
+#loading additional datasets
+college<-read_excel("cleancollege.xlsx") #https://data.ers.usda.gov/reports.aspx?ID=17829
+unemployment<-read_excel("UnemploymentReport.xlsx") #https://data.ers.usda.gov/reports.aspx?ID=17828
+obesity<-read_excel("ObesityData.xlsx") #https://www.flhealthcharts.gov/ChartsReports/rdPage.aspx?rdReport=BrfssCounty.DataViewer&bid=77
+highschool<-read_excel("HighSchool.xlsx") #https://data.ers.usda.gov/reports.aspx?ID=17829
+poverty<-read_excel("poverty.xlsx") #https://data.ers.usda.gov/reports.aspx?ID=17826
+icu <- read_excel("ICU Beds.xlsx") #https://khn.org/news/as-coronavirus-spreads-widely-millions-of-older-americans-live-in-counties-with-no-icu-beds/
+airquality <- read_excel("airquality.xlsx") #https://github.com/wxwx1993/PM_COVID
+
+#county age data from https://www.flhealthcharts.gov/ChartsReports/rdPage.aspx?rdReport=NonVitalIndRateOnly.Dataviewer&amp;cid=9913
+age <- read_excel("AllCounties_Data.xlsx")
+colnames(age)[1] <- "County" # change first column name
+colnames(age)[2] <- "Median Age" # change first column name
+age <- age[-c(1:2),] #deleting first two rows
+
+```
+## Cleaning Data
+Code below cleans data and makes County as key field for joining datasets later.
+
+```{r}
+#Data cleansing
+#Cleaning college dataset
+#changing column names
+colnames(college)[1] <- "County" # change first column name
+colnames(college)[2] <- "College Completion Percentage" # change second column name
+college <- college[-c(43),]
+
+#Unemployment dataset
+unemployment <- unemployment[,c(-1,-2,-6)]
+names(unemployment)[1:2] <- c("County", "2021 Unemployment Rate")
+unemployment <- unemployment[-1,] #dropping NA or unnecessary rows
+unemployment <- unemployment[-c(68,69),] 
+
+#Obesity dataset
+names(obesity)[1:2] <- c("County", "2019 Adult Obese Population Percentage")
+obesity$`2019 Adult Obese Population Percentage` <- gsub("%", "", obesity$`2019 Adult Obese Population Percentage`)
+
+#high school dataset
+#drop columns
+highschool <- highschool[,-c(1,3:8)]
+highschool <- highschool[-1,]
+highschool <- highschool[-1,]
+colnames(highschool)[1] <- "County" # change first column name
+colnames(highschool)[2] <- "High School Completion Percentage" # change second column name
+highschool <- highschool[(-c(43,69,70)),]
+
+#Poverty dataset
+poverty <- poverty[-c(1,2), -c(1,2,4,6,8,10,12)]
+poverty <- poverty[, -6]
+poverty <- poverty[, -c(4,5)]
+poverty <- poverty[, -2]
+colnames(poverty)[1] <- "County" # change first column name
+colnames(poverty)[2] <- "Poverty Population Percentage" #
+poverty <- poverty[-1,]
+poverty <- poverty[-1,]
+
+#ICU Beds dataset
+icu <- icu[,-1]
+
+#changing column names and deleting first row showing column headers
+colnames(births)[1] <- "County" # change first column name
+colnames(births)[2] <- "FIPS" # change second column name
+births <- births[-1,] #delete first row
+
+colnames(population)[1] <- "County" # change first column name
+colnames(population)[2] <- "FIPS" # change second column name
+population <- population[-1,] # remove the first row of the data
+
+colnames(injuries)[1] <- "County" # change first column name
+colnames(injuries)[2] <- "FIPS" # change second column name
+injuries <- injuries[-1,] 
+
+colnames(housing)[1] <- "County" # change first column name
+colnames(housing)[2] <- "FIPS" # change second column name
+housing <- housing[-1,]
+
+colnames(heart)[1] <- "County" # change first column name
+colnames(heart)[2] <- "FIPS" # change second column name
+heart <- heart[-1,]
+
+colnames(cancer)[1] <- "County" # change first column name
+colnames(cancer)[2] <- "FIPS" # change second column name
+cancer <- cancer[-1,]
+#_________________________________________________________________________________________________________
+#_________________________________________________________________________________________________________
+
+#Data cleansing cont.
+
+str(fl_covid)
+
+#drop unnecessary and missing columns (Province_State, Country_Region, Last_Update, Recovered, Active)
+mycovid <- fl_covid[-c(4:6,11,12)]
+mycovid <- mycovid[-63,]
+
+colnames(mycovid)[3] <- "County"
+
+#Air quality
+row1 <- colnames(airquality)
+
+airnew <- rbind(row1,airquality)
+colnames(airnew)[1] <- "County" # change first column name
+colnames(airnew)[2] <- "Air Quality" 
+
+```
+
+Code below joins data with cbind in dplyr. Datasets already sorted by alphabetical order with 67 observations each.
+Therefore data is joined on correct county.
+
+```{r}
+#Joining Florida Tracking data 
+master <- cbind(births,cancer,heart,housing,injuries,population, college, unemployment, obesity, highschool, poverty, icu, age, airnew)
+
+```
+
+Code below creates column index dataframe, revealing unnecessary columns which are subsequently deleted from data frame.
+
+```{r}
+colNum <- (seq_len(ncol(master)))
+# then turn the vector into its own data frame with the first column called colNum 
+# (based on the earlier vector object)
+names_df <- as.data.frame(colNum)
+# add a new column called colname based on the vector of colnames in the march data frame
+names_df$colname <- (colnames(master))
+# now add the variable type into the data frame as a new column called "type"
+names_df$type <- (sapply(master, class))
+View(names_df)
+
+#Deleting unncessary columns
+newmaster <- master[,-c(21,22,23,76:78,91:93,105:107,114:116,119,120,122,126,128,130,132,142,144)]
+
+```
+
+Code below joins uploaded datasets with Johns Hopkins dataset. Code chunk set to run code but show no output, as it displays lenghty summary output.
+
+```{r include=FALSE}
+#Joining canvas dataset with Florida Tracking data
+final <- left_join(newmaster, mycovid, by = "County")
+final <- final %>% relocate(FIPS.y, .after = FIPS.x)
+
+#moving lethality column to front of dataframe
+final <- final %>% relocate(lethality, .after = FIPS.y)
+final <- final[,-c(2,3)]
+
+countydf <- final[,1] #county vector
+
+#changing variable type
+final <- final %>% mutate_if(is.character, as.numeric)
+final <- final %>% mutate_if(is.factor, as.numeric)
+final$County <- countydf
+
+####################################################
+##########################
+##########################
+
+cleandf <- final %>% select_if(~ !any(is.na(.)))
+summary(cleandf)
+sum(is.na(cleandf)) 
+#0 NAs
+```
+
+## Data Understanding
+
+Running correlation matrix on full dataset. Code counts number of occurences of correlation between independent variables greater than 0.7, evident of multicollinearity.
+
+```{r}
+cor_matrix <- cleandf %>%
+  correlate() %>%
+  rearrange()
+cor_matrix <- as.data.frame(cor_matrix)
+
+matrixrows <- cor_matrix$term
+rownames(cor_matrix) <- as.vector(matrixrows)
+cor_matrix <- cor_matrix[,-1]
+
+sumdf <- data.frame() #make empty data frame
+for (i in 1:ncol(cor_matrix)) {
+  sum(as.numeric(cor_matrix[,i] >.7), na.rm = TRUE) -> count #count pearson's r cor. coef. > 0.7 for each variable
+  sumdf <- rbind(sumdf, count)
+}
+countdf <- cbind(matrixrows, sumdf) #data frame of variable names and corresponding count of high correlations
+countdf <- countdf %>% arrange(desc(X1))
+print(countdf)
+```
+
+Filter out variables that show evidence of multicollinearity.
+
+```{r}
+nocor <- countdf %>% filter(X1 == 0)
+#nocor2 <- nocor %>% filter(matrixrows != "Latitude" | matrixrows != "X")
+nocor2 <- nocor[-c(1,23,33),] #dropping X, latitude, and longitude terms
+variables <- nocor2$matrixrows
+```
+
+## Data Preparation 
+Building tidy dataset suitable for modeling.
+
+```{r}
+variables[32:33] <- c("County", "lethality")
+
+finaldf <- cleandf[, which((names(cleandf) %in% variables) == TRUE)]
+
+```
+
+## Further Data Understanding with Visualizations
+One important variable we looked at to predict Lethality was Adult Obese Population
+Our research concluded obesity is a strong indicator of risk for Covid-19 lethalities and this graph shows a positive correlation between more obese adults and higher deaths from Covid-19 in a county
+
+```{r}
+ggplot(finaldf, aes(`2019 Adult Obese Population Percentage` / 100,lethality))+ 
+  geom_point()+ 
+  geom_smooth(method= "lm")+
+  xlab("Adult Obese Population by Percentage")+
+  ylab("Lethality Rate")+
+  scale_x_continuous(labels = scales::percent)
+
+```
+
+Another significant variable that had strong correlation with Lethality was Adult Incident rates of Lung Cancer.
+As displayed by the normal distribution, it is clear that, for Adults, Lung Cancer rates and Covid-19 deaths in counties went hand in hand.
+
+```{r}
+ggplot(data = finaldf, aes(x=Age.adjusted.incidence.rate.of.lung.and.bronchus.cancer.per.100.000))+ 
+  geom_histogram(aes(y=..density..), bins= 40, col="white")+ 
+  geom_density(aes(y=..density..), colour="red")+
+  xlab("Adult Incident Rate of Lung Cancer in")+
+  ylab("Lethality Rate")
+
+```
+
+Scatterplot of all variables.
+
+```{r}
+#Indexing by variables used in model
+pairs.panels(finaldf[,c(2,7,9,13,24,25,27,28,30,31,32)], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE) # show correlation ellipses
+```
+
+
+## Modeling
+
+First linear regression model on every variable in data frame. Model shows significant difference between R-squared and adjusted R-squared values showing possible model overfit.
+
+```{r}
+lethalitymodel <- lm(lethality ~ . - County, data = finaldf)
+summary(lethalitymodel)
+```
+
+Updated model with variables showing statistical significane in predicting lethality and others which are relevant given team's research.
+Multiple R2 = 0.65, Adjusted R2 = 0.59
+F-statistic = 11.9
+Model p-value = approximately 0
+
+Given this output, our model is statistically significant in predicting COVID-19 lethality rate for Florida counties.
+Our model explains about 59% variation of the COVID-19 lethality rate, indicating relatively useful prediction accuracy.
+
+```{r}
+updatemod <- lm(lethality ~ Age.adjusted.incidence.rate.of.breast.cancer.per.100.000 + 
+                  Age.adjusted.incidence.rate.of.lung.and.bronchus.cancer.per.100.000 +
+                       `2021 Unemployment Rate` + `Beds Shortage` + `Median Age` +
+                       Percent.of.the.population.living.within.a.ten.minute.walk..1.2.mile..of.an.off.street.trail.system +
+                       `2019 Adult Obese Population Percentage` + `Poverty Population Percentage` +
+                  `Percent of Population Aged 60+`, data = finaldf)
+
+summary(updatemod)
+```
+
+Saving residuals and predictions from updated linear regression model.
+
+```{r}
+#predicted values
+y_hat <- predict(updatemod, se.fit = TRUE)
+names(y_hat)
+
+# adding the predictions to the finaldf data frame
+finaldf$predictions <- y_hat$fit
+#adding resiuals to finaldf dataframe
+finaldf$residuals <- updatemod$residuals
+```
+
+# Assumption 1: Linear Relationship
+Plot of predictions vs. lethality rate for Florida counties. Shows linear relationship.
+
+```{r}
+ggplot(finaldf, aes(predictions, lethality)) + 
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+# Assumption 2: Independence of Residuals
+Residuals vs Fitted plot (1) does not show any pattern signifying a non-linear relationship or dependence 
+Passes assumption
+
+```{r}
+plot(updatemod)
+
+```
+
+# Assumption 3: Constant Variance of Residuals
+-Normalized residuals plot (3) show no distinct pattern or funnel shape
+-No visual depiction of heteroscedasticity 
+-Non-constant variance test does not indicate presence of heteroscedasticity
+-Assumption passed
+
+```{r}
+plot(updatemod)
+ncvTest(updatemod)
+```
+
+# Assumption 4: Normal Distribution of Residuals
+qq plot (2) shows slight upward curve, possibly indicating non-normal distribution of residuals.
+More investigation needed.
+
+```{r}
+plot(updatemod)
+
+```
+
+Additional tests for normality.
+-Residual plot shows skewed right shape.
+-Shapiro-Wilk Normality Test shows significant p-value (<0.05)  indicating we reject the null hypothesis that residuals are normally distributed.
+-Anderson-Darling Normality Test shows significant p-value (<0.05) again indicating reject the null hypothesis that residuals are normally distributed.
+-Assumption not satisfied.
+
+```{r}
+#shows slight skew right of residual distribution
+ggplot(data = finaldf, aes(x=residuals)) +
+  geom_histogram(aes(y=..density..), bins=10, col="white") +
+  geom_density(aes(y=..density..), colour="red")
+
+#shapiro-wilk normality test
+shapiro.test(finaldf$residuals)
+
+#Anderson Darling Test
+ad.test(finaldf$residuals)
+```
+
+# Multicollinearity
+Rechecking for multicollinearity with variance inflation factor (vif).
+
+```{r}
+
+#Multicollinearity 
+vif(updatemod)
+#all between 1 and 2, shows no sign of multicollinearity
+
+```
+
+# High Leverage Points
+Checking for high leverage points.
+
+```{r}
+#Cooks distance to check for high leverage points
+cooks.distance(updatemod)
+# easier to view as a data frame
+cooksd <- data.frame(cooks.distance(updatemod))
+
+# identifying the high leverage points in an easier way
+# rule of thumb
+cooks.distance(updatemod) > 4 / length(cooks.distance(updatemod))
+# in a data frame
+cooksd$hiLev <- cooks.distance(updatemod) > 4 / length(cooks.distance(updatemod))
+#new model results in more high leverage points, so will keep each country observation
+#for highest accuracy model
+
+```
+
+Cooks Distance indicates five high leverage data points  (counties):
+Citrus
+Highlands
+Monroe
+Osceola
+Sumter
+Given this is a significant percentage of observations (7.4%), these data points are required for providing a relevant model and outcome based on the business goal.
+
+## Evaluation and Conclusion
+Original Business Problem: Predict COVID-19 lethality rate in Florida counties.
+Our linear regression model addresses the business problem by providing:
+Reasonably accurate statistical model which predicts the lethality rate due to COVID-19 in Florida counties.
+Provides an explainable output utilizing public datasets and reproducible lethality rate predictions.
+
+Concerns:
+Model does not meet all assumptions required for linear regression.
+Therefore, model is not completely dependable and requires further tuning.
+Next steps are to train a non-linear regression or decision tree model on the modeling dataset.
+
+Thank you!
+
+
+
+
+
+
+
+
+
